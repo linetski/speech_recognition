@@ -44,6 +44,74 @@ __version__ = "3.10.4"
 __license__ = "BSD"
 
 
+def recognize_fasterwhisper(self, audio_data, model="small", show_dict=False, load_options=None, language=None,
+                            translate=False, **transcribe_options):
+    # custom recognizer for faster whisper
+    assert isinstance(audio_data, AudioData), "Data must be audio data"
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from faster_whisper import WhisperModel
+
+    if load_options or not hasattr(self, "whisper_model") or self.whisper_model.get(model) is None:
+        self.whisper_model = getattr(self, "whisper_model", {})
+        # self.whisper_model[model] = WhisperModel("base", device="cpu", compute_type="int8")
+        self.whisper_model[model] = WhisperModel("tiny", device="cuda", compute_type="auto")
+
+    wav_bytes = audio_data.get_wav_data(convert_rate=16000)
+    wav_stream = io.BytesIO(wav_bytes)
+    audio_array, sampling_rate = sf.read(wav_stream)
+    audio_array = audio_array.astype(np.float32)
+
+    segments, info = self.whisper_model[model].transcribe(audio_array, beam_size=5, )
+    text = ""
+    for segment in segments:
+        # print("%s " % (segment.text))
+        text = text + segment.text + " "
+        # print(text)
+    if show_dict:
+        return result
+    else:
+        return text.lower()
+
+
+def recognize_distilwhisper(self, audio_data, model="distil-whisper/distil-small.en", show_dict=False,
+                            load_options=None, language=None, translate=False, **transcribe_options):
+    # custom recognizer for distill-whisper
+    assert isinstance(audio_data, AudioData), "Data must be audio data"
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    model_id = "distil-whisper/distil-small.en"
+
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True)
+    model.to(device)
+    processor = AutoProcessor.from_pretrained(model_id)
+    whisper = pipeline(
+        "automatic-speech-recognition", model=model, tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor, max_new_tokens=128,
+        torch_dtype=torch_dtype, device=device, )
+
+    wav_bytes = audio_data.get_wav_data(convert_rate=16000)
+    wav_stream = io.BytesIO(wav_bytes)
+    audio_array, sampling_rate = sf.read(wav_stream)
+    audio_array = audio_array.astype(np.float16)
+
+    text = whisper(audio_array,
+                   chunk_length_s=50,
+                   stride_length_s=10,
+                   batch_size=8)
+    print(text)
+    if show_dict:
+        return result
+    else:
+        return text["text"]
+
+
 class AudioSource(object):
     def __init__(self):
         raise NotImplementedError("this is an abstract class")
